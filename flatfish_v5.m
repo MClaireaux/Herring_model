@@ -5,9 +5,6 @@ clear all;
 %Resolution of model
 LengthMin = 16.; LengthMax = 200.; LengthStep = 2.;
 RiskMin = 0.; RiskMax = 2.; RiskStep = 0.05;
-qMin = 0.; qMax = 1.; qSlope =-0.5; qstep = (RiskMax-RiskMin)/RiskStep; 
-% Introduction of the q parameter, depends on ForgaingRisk 
-%Value of qSlope is specific to one species (here : herring)
 AllocationStep = 0.05;
 AgeMin = round(1); AgeMax = round(30);
 StepsWithinYear = 4;  %High resolution: 24
@@ -221,7 +218,6 @@ AMax = 1/AllocationStep+1;
 F(1:LMax,AgeMin:AgeMax) = 0.;
 Strategy(1:2,1:LMax,AgeMin:AgeMax) = 0.;
 Fitness(1:AMax,1:RMax) = 0.;
-q(1:AMax,1:RMax) =0.;
 
 %Other variables
 Age=round(0); L=round(0); R=round(0); A=round(0); Harvest=round(0); Sex=round(0); Step=round(0); %Loop counters Age, Length, Risk, Allocation, Harvest, Sex, Step (within year)
@@ -263,8 +259,6 @@ end
 Allocation(1:AMax,1:RMax) = 0.;
 for R = 1:RMax
  Allocation(1:AMax,R)=0:AllocationStep:1;
- q(:,R)=qSlope.*ForagingRisk(:,R)+1;
- 
 end
 
 if PlotFig3 == 1;
@@ -372,7 +366,7 @@ for Cycle = 1:Cycles;
     end                                                                       % "
     axis([AgeMin AgeMax-1 LengthMin LengthMax 0 2]); axis square; caxis([0 2]);          % "
    end
-   for Age = AgeMax-1:-1:AgeMin %%% Backward iteration
+   for Age = AgeMax-1:-1:AgeMin %%%
     for L = 1:LMax;
      Length(:,:) = LengthMin + (L-1)*LengthStep;  %cm
      Weight(:,:) = (K./100).*(Length.^3);
@@ -397,7 +391,7 @@ for Cycle = 1:Cycles;
      end %Steps within year
      ForagingM(:,:) = ForagingRisk.*SizeM(:,:);
      SpawningM(:,:) = SpawningMFactor(:,:).*SizeM(:,:);
-     Survival(:,:) = exp(-SizeM(:,:) - ForagingM(:,:) - (FishingM(:,:).*q(:,:)) - SizeIndependentM - GonadM(:,:) - SpawningM(:,:));
+     Survival(:,:) = exp(-SizeM(:,:) - ForagingM(:,:) - FishingM(:,:) - SizeIndependentM - GonadM(:,:) - SpawningM(:,:));
      intL(:,:) = max(1, min(floor((Length-LengthMin)./LengthStep)+1, LMax-1)); %%%% ??
      dL(:,:) = (Length-LengthMin)./LengthStep+1-intL; %%%% ??
      %GSI = Gonads ./ (Weight + Gonads);
@@ -414,7 +408,7 @@ for Cycle = 1:Cycles;
      end
      [OptAFitness,OptA] = max(Fitness);  %First find optimal A (for each R)- matlab stores optimal fitness and index of optimal fitness in the two arrays %%% ????(making)
      [OptFitness,OptR] = max(OptAFitness,[],2);  %Then find optimal R as maximum of the many values from previous line.
-     F(L,Age) = OptFitness; %%% OptAFitness =Valeur max de chaque colonne / OpA = NumÃ©ro de ligne ou se trouve OptAFitness
+     F(L,Age) = OptFitness; %%% OptAFitness =Valeur max de chaque colonne / OpA = Numéro de ligne ou se trouve OptAFitness
      Strategy(1,L,Age) = (OptA(OptR)-1)*AllocationStep;
      Strategy(2,L,Age) = RiskMin+(OptR-1)*RiskStep;
      %    surf(hFitness,Fitness);
@@ -433,7 +427,7 @@ for Cycle = 1:Cycles;
    
    %FORWARD SIMULATION
    %Initiate first cohort
-   %%%CrÃ©ation d'une matrice comprenant toutes les valeurs ci-dessous.
+   %%%Création d'une matrice comprenant toutes les valeurs ci-dessous.
    %AgeMin = round(1) ; AgeMax=round(30)            -> ??round()
    iLength = LengthMin;
    iWeight = (K/100)*LengthMin^3;
@@ -455,7 +449,7 @@ for Cycle = 1:Cycles;
    
    for Age = AgeMin:AgeMax-1;
     %Look up optimal strategy for each age
-    iintL = max(1, min(floor((iLength-LengthMin)./LengthStep)+1, LMax-1));  %%% Valeurs discrÃ¨tes de Longueur ?
+    iintL = max(1, min(floor((iLength-LengthMin)./LengthStep)+1, LMax-1));  %%% Valeurs discrètes de Longueur ?
     idL = (iLength-LengthMin)./LengthStep+1-iintL;                             %%% Gain de Longueur au temps i ?
     iAllocation   = idL*Strategy(1,iintL+1,Age) + (1.-idL)*Strategy(1,iintL,Age);
     iForagingRisk = idL*Strategy(2,iintL+1,Age) + (1.-idL)*Strategy(2,iintL,Age);
