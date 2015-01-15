@@ -5,9 +5,9 @@ clear all;
 %Resolution of model
 LengthMin = 16.; LengthMax = 200.; LengthStep = 2.;
 RiskMin = 0.; RiskMax = 2.; RiskStep = 0.05;
-qMin = 0.; qMax = 1.; qSlope =-0.5; qstep = (RiskMax-RiskMin)/RiskStep; 
+qMin = 0.; qMax = 1.; qSlope =0.5; qstep = (RiskMax-RiskMin)/RiskStep; 
 % Introduction of the q parameter, depends on ForgaingRisk 
-%Value of qSlope is specific to one species (here : herring)
+%Value of qSlope is specific to one species (here : cod)
 AllocationStep = 0.05;
 AgeMin = round(1); AgeMax = round(30);
 StepsWithinYear = 4;  %High resolution: 24
@@ -55,7 +55,7 @@ CostOfGonadTissue = 2; GSImax = 0.15; GonadExp=2.; % A CostOfGonadTissue larger 
 MaleFitnessHalfSat = 50.; MaleGonadThreshold = 0.01;  % Diminishing returns for males, Gonadthreshold given in terms of GSI
 
 %Other parameter combinations
-ParameterSet = 'Flatfish';  %Optional: Specify here which parameter set from below to use; if string is empty parameters from above are used
+ParameterSet = 'Cod';  %Optional: Specify here which parameter set from below to use; if string is empty parameters from above are used
 if strcmp(ParameterSet,'Cod');
  LengthMin = 16.; LengthMax = 200; LengthStep = 2.;
  RiskMin = 0.; RiskMax = 2.; RiskStep = 0.05; AllocationStep = 0.02;
@@ -405,7 +405,7 @@ for Cycle = 1:Cycles;
       for R = 1:RMax;
        Fitness(A,R) = dL(A,R)*F(intL(A,R)+1,Age+1) + (1-dL(A,R))*F(intL(A,R),Age+1);  %Residual reproductive value = future fitness %%%Manque +1 ?
       end
-     end
+     end 
      if Sex == 1;
       Fitness(:,:) = Survival .* (Fitness + Gonads);  %Reprod. at end of year, gonads added to residual fitness, everything discounted by survival
      elseif Sex == 2;
@@ -421,13 +421,13 @@ for Cycle = 1:Cycles;
      %    set(hFitness,'Xlim',[1 RMax],'Ylim',[1 AMax],'Zlim',[0 10000]);
      %    drawnow;
     end  %Length
-    if PlotStrategies == 1;
-     Strat1 = reshape(Strategy(1,:,AgeMin:AgeMax-1),LMax,[]);
-     Strat2 = reshape(Strategy(2,:,AgeMin:AgeMax-1),LMax,[]);
-     refreshdata(hStrat1surf(Sex));
-     refreshdata(hStrat2surf(Sex));
-     drawnow;
-    end
+    %if PlotStrategies == 1;
+     %Strat1 = reshape(Strategy(1,:,AgeMin:AgeMax-1),LMax,[]);
+     %Strat2 = reshape(Strategy(2,:,AgeMin:AgeMax-1),LMax,[]);
+     %refreshdata(hStrat1surf(Sex));
+     %refreshdata(hStrat2surf(Sex));
+     %drawnow;
+    %end
    end  %Age
    
    
