@@ -1,0 +1,321 @@
+clear all;
+close all;
+
+
+for Forward =0:1:1; % 0 : Run backward simulation, 1 : Run forward simulation
+for Fishing=0.11; % Input fishing pressure
+
+for qSlope=-0.3; % Vulnerability to fishing gear while foraging
+
+CostOfGonadTissue = 1; % A CostOfGonadTissue larger than one means gonads are more expensive to build than other tissue 
+
+if Forward == 0;
+%% DEFINE PARAMETERS
+%Resolution of model
+%Preparation of the matrix for the backward optimisation
+LengthMin = 10.; LengthMax = 200.; LengthStep = 2.; %Length resolution
+ForagingBehMin = 1; ForagingBehMax = 5; ForagingBehStep = 0.2; %Foraging resolution
+ForagingRiskMean=1.4; %Scaling in the foraging behaviour
+AllocationStep = 0.05; %Energy allocation resolution
+AgeMin = round(1); AgeMax = round(25); %Age resolution
+StepsWithinYear = 12;  %Number of iterations within one year. High resolution: 24
+
+
+%Net intake function and physiology
+IntakeExponent = 0.7;  %a [g body mass laid down per g^0.7]]
+MetabolicExponent = 0.7; %Costs of metabolism b
+MetabolicConstant = 0.3; %Metabolic coefficient b0
+
+K = 0.95;  % Fulton's condition factor
+
+%Mortalities
+SizeMCoeff = 1.2; SizeMExp = -0.75;  % Natural mortality
+SpawningMFactor_value = 0;  %Factor to multiply size-dependent mortality with if spawning occurs that year (0: spawning does not influence size-dependent mortality)
+SizeIndependentM = 0.05; % Baseline mortality
+ForagingM_coeff = 0.1; ForagingM_exp = 3; % Parameters for the foraging mortality
+
+%Other physiological and ecological parameters
+ GSImax = 0.2; GonadExp=2; 
+
+%Array dimensions
+LMax = round((LengthMax-LengthMin)/LengthStep+1); %Length
+BMax = (ForagingBehMax-ForagingBehMin)/ForagingBehStep+1; %Foraging
+AMax = 1/AllocationStep+1; %Energy allocation
+EMax = 11; %Environment
+
+%Environmental Stochasticity: varying food availability
+EStDev = 2.5;
+EMean = 1+(EMax-1)/2;
+ProbE(1:11) = 0.; ValueE(1:11) = 0.;
+ScaleE = 0.5;
+for E = 1:EMax;
+ ProbE(E) = (1/(EStDev*sqrt(2*pi())))*exp(-((E-EMean)^2)/(2*(EStDev^2)));
+ ValueE(E) = 1+ScaleE*(2*((E-1)/(EMax-1))-1);
+end
+sumProbE = sum(ProbE);
+ProbE(:) = ProbE(:)/sumProbE;
+
+%% DECLARE VARIABLES
+%(to save computing time)
+%Fitness and strategy matrices
+F(1:EMax,1:LMax,AgeMin:AgeMax) = 0.;
+Strategy(1:2,1:EMax,1:LMax,AgeMin:AgeMax) = 0.;
+Fitness(1:AMax,1:BMax) = 0.;
+%%%   q(1:AMax,1:BMax) =0;
+
+%Other variables
+Age=round(0); L=round(0); R=round(0); A=round(0); Harvest=round(0); Step=round(0); %Loop counters Age, Length, Risk, Allocation, Harvest, Step (within year)
+Length(1:EMax,1:AMax,1:BMax)=0.; intL(1:EMax,1:AMax,1:BMax)=round(0); dL(1:EMax,1:AMax,1:BMax)=0.; NewL(1:EMax,1:AMax,1:BMax)=0.;
+Weight(1:EMax,1:AMax,1:BMax)=0.; NewW(1:EMax,1:AMax,1:BMax)=0.; Gonads(1:EMax,1:AMax,1:BMax)=0.; GSI = 0.;
+SizeM(1:EMax,1:AMax,1:BMax)=0.; SizeM_step(1:EMax,1:AMax,1:BMax)=0.; SizeMFactor(1:EMax,1:AMax,1:BMax)=0.;
+GonadM(1:EMax,1:AMax,1:BMax)=0.; ForagingM(1:EMax,1:AMax,1:BMax)=0.;  SpawningM(1:EMax,1:AMax,1:BMax)=0.; SpawningMFactor(1:EMax,1:AMax,1:BMax)=0.;
+FishingM(1:EMax,1:AMax,1:BMax)=0.; ForagingRate(1:EMax,1:AMax,1:BMax) = 0.;
+Survival(1:EMax,1:AMax,1:BMax)=0.; Intake(1:EMax,1:AMax,1:BMax)=0.; ForagingBehaviour(1:EMax,1:AMax,1:BMax)=0.; ForagingRisk(1:EMax,1:AMax,1:BMax) = 0.;
+
+
+%Declaration of variables for forward simulation
+MaxInd = 10000;  %Number of individuals to run for forward simulation
+Ind(1:MaxInd,AgeMin:AgeMax,1:18) = 0.;  %Table of individual growth trajectory from forward simulation
+iLength = 0.; iintL = round(0); idL = 0.;
+iWeight = 0.; iGonads = 0.; iGSI = 0.;
+iAllocation = 0.; iForagingRisk = 0.; iForagingBehaviour = 0.; iIntake = 0.;
+iSizeM = 0.; iSizeM_step = 0.; iForagingM = 0.; iGonadM = 0.; iSpawningM = 0.; iSurvival = 0.;
+iFishingM = 0.;  
+
+%Calculating of foraging risk and allocation matrices for array-based optimization
+for A = 1:AMax;
+ for E = 1:EMax;
+ ForagingBehaviour(E,A,1:BMax)=ForagingBehMin:ForagingBehStep:ForagingBehMax;
+ end
+end
+for E = 1:EMax;
+ ForagingRate(E,:,:) = ForagingBehaviour(E,:,:)*ValueE(E);  %Foraging rate is now energetic consequence of a given foraging behaviour, that depends on the environment
+end
+
+Allocation(1:EMax,1:AMax,1:BMax) = 0.;
+for B = 1:BMax
+ for E=1:EMax;
+  Allocation(E,1:AMax,B)=0:AllocationStep:1; 
+ end
+end
+
+ForagingRisk(:,:,:) = ForagingM_coeff.*(ForagingBehaviour(:,:,:).^ForagingM_exp); %Foraging risk is also dependent on the foraging behaviour
+
+%% BACKWARD SIMULATION
+
+F(:,:,:) = 0.;
+Strategy(:,:,:,:) = 0.; % Array for optimal energy allocation and foraging behaviour
+SpawningMFactor(:,:,:) = SpawningMFactor_value;
+SpawningMFactor(:,1,:) = 0.; %No spawning mortality if there is no allocation to reproduction
+
+for Age = AgeMax-1:-1:AgeMin
+ 
+ for L = 1:LMax;
+  Length(:,:,:) = LengthMin + (L-1)*LengthStep;  %cm
+  Weight(:,:,:) = (K./100).*(Length.^3);   %g
+  Gonads(:,:,:) = 0.;  %g
+  SizeM(:,:,:) = 0.; %Size-dependent mortality
+  FishingM(:,:,:)=0.; %Fishing mortality
+  GonadM(:,:,:) = 0.; %Mortality due to gonads
+  for Step=1:StepsWithinYear;
+   SizeM_step(:,:,:) = (1./StepsWithinYear).*SizeMCoeff .* (Length(:,:,:).^SizeMExp);
+   SizeM(:,:,:) = SizeM(:,:,:) + SizeM_step(:,:,:); %Update the size-dependent mortality
+   FishingM(:,:,:) = FishingM(:,:,:) + (1./StepsWithinYear).*((1-qSlope).*Fishing + qSlope.*Fishing.*(ForagingRisk(:,:,:)./ForagingRiskMean)); %Update the fishing mortality
+   FishingM(:,:,:) = max(0.,FishingM(:,:,:)); %The output fishing mortality cannot be negative
+   Intake(:,:,:) = (1./StepsWithinYear).*(ForagingRate(:,:,:).*(Weight(:,:,:).^IntakeExponent)-MetabolicConstant.*((Weight(:,:,:)+Gonads(:,:,:)).^MetabolicExponent)); %Update the amount of energy intake
+   Weight(:,:,:) = Weight(:,:,:) + (1-Allocation(:,:,:)).*Intake(:,:,:); %Update the weight
+   Gonads(:,:,:) = Gonads(:,:,:)+max(0,(1/CostOfGonadTissue) .* Allocation(:,:,:) .* Intake(:,:,:)); %Update the gonads
+   GonadM(:,:,:) = GonadM + SizeM_step.*(((Gonads(:,:,:)./(Weight(:,:,:)+Gonads(:,:,:)))./GSImax).^GonadExp); %Update the gonad mortality
+    Length(:,:,:) = min(((100./K).*Weight(:,:,:)).^(1/3), LengthMax); %Update the length
+    
+  end %Steps within year
+              
+   
+  ForagingM(:,:,:) = ForagingRisk(:,:,:).*SizeM(:,:,:); %Update the foraging mortality
+  SpawningM(:,:,:) = SpawningMFactor(:,:,:).*SizeM(:,:,:); %If SpawningMFactor higher than 0,the size-dependent mortality is modified if spawning occured that year
+  Survival(:,:,:) = exp(-SizeM(:,:,:) - ForagingM(:,:,:) - FishingM(:,:,:) - SizeIndependentM - GonadM(:,:,:) - SpawningM(:,:,:)); %Calculate survival during the year
+  intL(:,:,:) = max(1, min(floor((Length(:,:,:)-LengthMin)./LengthStep)+1, LMax-1)); % integer part for interpolation of residual reproductive value
+  dL(:,:,:) = (Length(:,:,:)-LengthMin)./LengthStep+1-intL(:,:,:); % decimal part for interpolation of residual reproductive value
+  
+  % Calculation of fitness considering environmental conditions, energy
+  % allocation and foraging behaviour
+  for E = 1:EMax
+   Fitness(:,:) = 0.;
+   for A = 1:AMax;
+    for B = 1:BMax;
+     for EnextT = 1:EMax
+      Fitness(A,B) = Fitness(A,B) + ProbE(EnextT)*(dL(E,A,B)*F(EnextT,intL(E,A,B)+1,Age+1) + (1-dL(E,A,B))*F(EnextT,intL(E,A,B),Age+1));  %Residual reproductive value = future fitness
+     end
+    end
+   end
+   Fitness(:,:) = squeeze(Survival(E,:,:)) .* (Fitness(:,:) + squeeze(Gonads(E,:,:)));  %Reproduction at the end of year, gonads added to residual fitness, everything discounted by survival
+   
+   [OptAFitness,OptA] = max(Fitness);  %First find optimal energy allocation (for each foraging behaviour)- matlab stores optimal fitness and index of optimal fitness in the two arrays
+   [OptFitness,OptB] = max(OptAFitness,[],2);  %Then find optimal foraging behaviour as maximum of the many values from previous line.
+   F(E,L,Age) = OptFitness; %Optimal fitness (States age and lenght as well as the environment)
+   Strategy(1,E,L,Age) = (OptA(OptB)-1)*AllocationStep; %Optimal allocation strategy
+   Strategy(2,E,L,Age) = ForagingBehMin+(OptB-1)*ForagingBehStep; %Optimal Foraging strategy
+   
+    end %E
+  
+ end  %Length
+ 
+end  %Age
+
+% Save the desired parameters for the BACKWARD calculation
+name=['FishingS',num2str(Fishing*1000),'_qSlope',num2str(qSlope*100),'_Steep',num2str(Slope),'_L50_',num2str(L50)];%Create the name of the file
+save([name '.mat'],'Distance','LengthMax','Slope','L50','UseSelectivity','MigrationConst','MigrationExp','SpawningMFactor_value','StepsWithinYear','ForagingRiskMean','MetabolicConstant','LengthStep','LMax','LengthMin','MaxInd','AgeMin','AgeMax','EMean','EStDev','EMax','ScaleE','Strategy','Fishing','qSlope','IntakeExponent','MetabolicExponent','K','SizeMCoeff','SizeMExp','SizeIndependentM','ForagingM_coeff','ForagingM_exp','CostOfGonadTissue','GSImax','GonadExp')
+ 
+
+
+elseif Forward == 1;
+
+%Load the file from the BACKWARD calculation    
+name=['FishingS',num2str(Fishing*1000),'_qSlope',num2str(qSlope*100),'_Steep',num2str(Slope),'_L50_',num2str(L50)];
+load([name '.mat']);
+%% FORWARD SIMULATION
+%Initiate first cohort
+%%%Create a starting matrix with all the variables mentioned below
+%One line is one individual, one column is one age,one sheet is one
+%variable
+          
+Ind(1:MaxInd,AgeMin:AgeMax,1:18)=0;      % Create matrix
+Ind( :,AgeMin,1) = LengthMin;            % 1: Length at age
+Ind( :,AgeMin,2) = (K/100)*LengthMin^3;  % 2. Weight at age
+Ind( :,AgeMin,3) = 1.;                   % 3. Survival until age
+Ind( :,AgeMin,4) = 0.;                   % 4. Gonads at end of age
+Ind( :,AgeMin,5) = 0.;                   % 5. GSI
+Ind( :,AgeMin,6) = 0.;                   % 6. Allcoation value
+Ind( :,AgeMin,7) = 0.;                   % 7. Risk taken
+Ind( :,AgeMin,8) = 0.;                   % 8. Intake
+Ind( :,AgeMin,9) = 0.;                   % 9. Fitness at age
+Ind(:,AgeMin,10) = 0.;                   %10. Size-dependent predation mortality
+Ind(:,AgeMin,11) = 0.;                   %11. Fishing mortality
+Ind(:,AgeMin,12) = 0.;                   %12. Foraging mortality
+Ind(:,AgeMin,13) = 0.;                   %13. Gonad mortality
+Ind(:,AgeMin,14) = 0.;                   %14. Natural mortality rate
+Ind(:,AgeMin,15) = 0.;                   %15. Intake
+Ind(:,AgeMin,16) = 0.;                   %17. Number of individuals in the population
+Ind(:,AgeMin,17) = 0.;                   %19. Total Stock Biomass
+Ind(:,AgeMin,18) = 100.;                 %18. Survival 
+
+for IndNo = 1:MaxInd; %For each individual
+ iLength = LengthMin; %Startig length
+ iWeight = (K/100)*LengthMin^3; %Starting weight
+ iSurvival = 1.;  %Survival until age
+ 
+ % Get the modificator for food availability from the environment
+ for Age = AgeMin:AgeMax-1;
+  EisOK = 0.;
+  while EisOK==0;
+   iE = EMean + EStDev*randn(1);
+   if iE > 1;
+    if iE < EMax;
+     EisOK = 1;
+    end
+   end
+  end
+  EValue = 1+ScaleE*(2*((iE-1)/(EMax-1))-1);
+   
+  %Look up optimal strategy
+  
+  % Environmental conditions for food availability
+  iintE = max(0.,min(floor(iE),EMax-1));
+  idE = max(0.,min(iE-iintE,1));
+  
+  iintL = max(1, min(floor((iLength-LengthMin)./LengthStep)+1, LMax-1)); 
+  idL = (iLength-LengthMin)./LengthStep+1-iintL;                             %%%Length increment
+  
+  iAllocation        =     idE *idL*Strategy(1,iintE+1,iintL+1,Age) +     idE *(1.-idL)*Strategy(1,iintE+1,iintL  ,Age) + ...
+                       (1.-idE)*idL*Strategy(1,iintE  ,iintL+1,Age) + (1.-idE)*(1.-idL)*Strategy(1,iintE  ,iintL  ,Age); %Extract the optimale allocation strategy from the backward calculation array
+  iAllocation = max(0., min(iAllocation, 1.));
+  
+  iForagingBehaviour =     idE *idL*Strategy(2,iintE+1,iintL+1,Age) +     idE *(1.-idL)*Strategy(2,iintE+1,iintL  ,Age) + ...
+                       (1.-idE)*idL*Strategy(2,iintE  ,iintL+1,Age) + (1.-idE)*(1.-idL)*Strategy(2,iintE  ,iintL  ,Age); %Extract the optimal foraging behaviour from the backward calculation array
+  iForagingRisk = ForagingM_coeff*(iForagingBehaviour^ForagingM_exp); %Foraging risk based on optimal foraging behaviour
+  
+  %Preparing the mortality, gonad and intake variables
+  iSizeM = 0.;
+  iFishingM=0.;
+  iGonads = 0.;
+  iGonadM = 0.;
+  iSpawningM = 0.;
+  iIntake = 0.;
+  
+  
+  for Step=1:StepsWithinYear;
+   iSizeM_step = (1/StepsWithinYear)*SizeMCoeff * (iLength^SizeMExp); 
+   iSizeM = iSizeM + iSizeM_step; %Update size-dependent mortality
+   
+   iFishingM = iFishingM + (1/StepsWithinYear)*((1-qSlope)*Fishing + qSlope*(iForagingRisk/ForagingRiskMean)*Fishing); %Update fishing mortality output
+   
+   %Fishing mortality cannot be negative
+   if iFishingM < 0
+    iFishingM = 0;
+   else
+   end
+   
+   iIntake_step = (1/StepsWithinYear)*(iForagingBehaviour*EValue*(iWeight^IntakeExponent)-MetabolicConstant*((iWeight+iGonads)^MetabolicExponent)); 
+   iWeight = iWeight + (1-iAllocation)*iIntake_step; %Update weight
+   iGonads = iGonads+max(0,(1/CostOfGonadTissue) * iAllocation * iIntake_step); %Update gonads
+  iGonadM = iGonadM + iSizeM_step*(((iGonads/(iWeight+iGonads))/GSImax)^GonadExp); %Update gonad mortality
+   iLength = min(((100/K)*iWeight)^(1/3), LengthMax); %Update size
+   iIntake = iIntake + iIntake_step; %Update intake
+  
+  end %End of the year
+ 
+  iForagingM = iForagingRisk*iSizeM; %Update foraging mortality
+  
+  if iAllocation > 1.e-4; 
+   iSpawningM = SpawningMFactor_value*iSizeM; %If SpawningMFactor_value higher than 0,spawning increases size-dependent mortality
+  end
+  
+  iSurvival = iSurvival * exp(-iSizeM - iForagingM - (iFishingM) - SizeIndependentM - iGonadM - iSpawningM); %Calculate survival
+  iGSI = iGonads / (iWeight + iGonads); %Calculate GSI
+  NInd=MaxInd*iSurvival; %Number of individuals in the population
+  SSB=NInd*(iWeight+iGonads);%Total stock biomass
+  
+  if Age == 1
+  iSurvivalYr =iSurvival*100;
+  else
+   iSurvivalYr = (iSurvival*100)/Ind( IndNo,Age,3);%Calculate survival for the year 
+  end
+  
+  %Updating the starting matrix
+  Ind( IndNo,Age+1,1) = iLength;                    
+  Ind( IndNo,Age+1,2) = iWeight+iGonads;
+  Ind( IndNo,Age+1,3) = iSurvival;
+  Ind( IndNo,Age+1,4) = iGonads;
+  Ind( IndNo,Age+1,5) = iGSI;
+  Ind( IndNo,Age  ,6) = iAllocation;                  
+  Ind( IndNo,Age  ,7) = iForagingRisk;
+  Ind( IndNo,Age  ,8) = iForagingBehaviour;                 
+  Ind( IndNo,Age+1,9) = Ind(IndNo,Age,9) + iGonads*iSurvival;   
+  Ind(IndNo,Age  ,10) = iSizeM;            
+  Ind(IndNo,Age  ,11) = iFishingM;
+  Ind(IndNo,Age  ,12) = iForagingM;
+  Ind(IndNo,Age  ,13) = iGonadM;
+  Ind(IndNo,Age  ,14) = iForagingM+iSizeM+SizeIndependentM+iGonadM+iSpawningM;
+  Ind(IndNo,Age  ,15) = iIntake;
+  Ind(IndNo,Age  ,16) = NInd;
+  Ind(IndNo,Age  ,17) = SSB;
+  Ind(IndNo,Age  ,18) = iSurvivalYr;
+  
+ end  %Age
+
+end  %IndNo
+
+%Save the file
+ name=['Ind_FishingS',num2str(Fishing*1000),'_qSlope',num2str(qSlope*100),'_Steep',num2str(Slope),'_L50_',num2str(L50)]; %Create name
+save([name '.mat'],'Ind','AgeMax','SizeIndependentM','Fishing','Distance','MaxInd','iMigration','CostOfGonadTissue','ForagingRiskMean'); %Save the variables of interest
+
+
+
+end % qSlope
+end %Fishing
+
+%If Forward = 0/1
+
+end
+end
+
